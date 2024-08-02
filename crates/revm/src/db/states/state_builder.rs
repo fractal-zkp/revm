@@ -1,4 +1,4 @@
-use super::{cache::CacheState, state::DBBox, BundleState, State, TransitionState};
+use super::{cache::CacheState, state::DBBox, BundleState, ExecutionTrace, State, TransitionState};
 use crate::db::EmptyDB;
 use revm_interpreter::primitives::{
     db::{Database, DatabaseRef, WrapDatabaseRef},
@@ -22,6 +22,8 @@ pub struct StateBuilder<DB> {
     /// Do we want to create reverts and update bundle state.
     /// Default is false.
     with_bundle_update: bool,
+    /// Do we want to create an execution trace.
+    with_execution_trace: bool,
     /// Do we want to merge transitions in background.
     /// This will allows evm to continue executing.
     /// Default is false.
@@ -55,6 +57,7 @@ impl<DB: Database> StateBuilder<DB> {
             with_cache_prestate: None,
             with_bundle_prestate: None,
             with_bundle_update: false,
+            with_execution_trace: false,
             with_background_transition_merge: false,
             with_block_hashes: BTreeMap::new(),
         }
@@ -70,6 +73,7 @@ impl<DB: Database> StateBuilder<DB> {
             with_cache_prestate: self.with_cache_prestate,
             with_bundle_prestate: self.with_bundle_prestate,
             with_bundle_update: self.with_bundle_update,
+            with_execution_trace: self.with_execution_trace,
             with_background_transition_merge: self.with_background_transition_merge,
             with_block_hashes: self.with_block_hashes,
         }
@@ -123,6 +127,16 @@ impl<DB: Database> StateBuilder<DB> {
         }
     }
 
+    /// Trace the execution.
+    ///
+    /// This is needed if we want to create a witness for stateless execution.
+    pub fn with_execution_trace(self) -> Self {
+        Self {
+            with_execution_trace: true,
+            ..self
+        }
+    }
+
     /// It will use different cache for the state. If set, it will ignore bundle prestate.
     /// and will ignore `without_state_clear` flag as cache contains its own state_clear flag.
     ///
@@ -164,6 +178,7 @@ impl<DB: Database> StateBuilder<DB> {
             database: self.database,
             transition_state: self.with_bundle_update.then(TransitionState::default),
             bundle_state: self.with_bundle_prestate.unwrap_or_default(),
+            execution_trace: self.with_execution_trace.then(ExecutionTrace::default),
             use_preloaded_bundle,
             block_hashes: self.with_block_hashes,
         }
