@@ -14,12 +14,16 @@ pub struct ExecutionTrace {
 impl ExecutionTrace {
     /// Add accessed account.
     pub fn add_account(&mut self, address: Address) {
-        self.accounts.insert(address, Default::default());
+        self.accounts.entry(address).or_default();
     }
 
     /// Add accessed storage slot.
-    pub fn add_storage(&mut self, address: Address, slot: U256) {
-        self.accounts.entry(address).or_default().insert(slot);
+    pub fn add_storage(&mut self, address: &Address, slot: U256) {
+        if let Some(storage) = self.accounts.get_mut(address) {
+            storage.insert(slot);
+        } else {
+            unreachable!("Account is guaranteed to be loaded before storage is accessed.");
+        }
     }
 
     /// Add accessed code.

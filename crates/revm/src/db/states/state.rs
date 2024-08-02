@@ -255,7 +255,7 @@ impl<DB: Database> Database for State<DB> {
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(execution_trace) = self.execution_trace.as_mut() {
-            execution_trace.add_storage(address, index);
+            execution_trace.add_storage(&address, index);
         }
 
         // Account is guaranteed to be loaded.
@@ -322,17 +322,16 @@ impl<DB: Database> DatabaseCommit for State<DB> {
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use super::*;
     use crate::db::{
         states::{reverts::AccountInfoRevert, StorageSlot},
-        AccountRevert, AccountStatus, BundleAccount, RevertToSlot,
+        AccountRevert, AccountStatus, BundleAccount, EmptyDBTyped, RevertToSlot,
     };
     use revm_interpreter::primitives::{keccak256, HashSet};
 
-    #[test]
-    fn test_execution_trace() {
-        let mut state = State::builder().with_execution_trace().build();
-
+    fn access_state(state: &mut State<EmptyDBTyped<Infallible>>) -> ExecutionTrace {
         // define access targets
         let block_num_1 = 1;
         let block_num_2 = 2;
@@ -350,15 +349,15 @@ mod tests {
         // access targets
         state.block_hash(block_num_1).unwrap();
         state.block_hash(block_num_2).unwrap();
-        state.load_cache_account(account_1).unwrap();
+        state.basic(account_1).unwrap();
         state.storage(account_1, account_1_slot_access_1).unwrap();
         state.storage(account_1, account_1_slot_access_2).unwrap();
-        state.load_cache_account(account_2).unwrap();
+        state.basic(account_2).unwrap();
         state.storage(account_2, account_2_slot_access_1).unwrap();
         state.code_by_hash(bytecode_hash_1).unwrap();
         state.code_by_hash(bytecode_hash_2).unwrap();
 
-        // construct expected witness tracker
+        // construct expected `ExecutionTrace`
         let expected = ExecutionTrace {
             accounts: HashMap::from([
                 (
@@ -371,9 +370,26 @@ mod tests {
             block_hashes: HashSet::from([block_num_1, block_num_2]),
         };
 
+        expected
+    }
+
+    #[test]
+    fn test_execution_trace() {
+        let mut state = State::builder().with_execution_trace().build();
+
+        // access state
+        let expected_trace = access_state(&mut state);
+
         // apply assertions
         let witness_tracker = state.take_execution_trace();
-        assert_eq!(Some(expected), witness_tracker);
+        assert_eq!(Some(expected_trace), witness_tracker);
+
+        // access state for a second time
+        let expected_trace = access_state(&mut state);
+
+        // apply assertions for a second time
+        let witness_tracker = state.take_execution_trace();
+        assert_eq!(Some(expected_trace), witness_tracker);
     }
 
     #[test]
