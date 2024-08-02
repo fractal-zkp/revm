@@ -19,7 +19,7 @@ pub use emptydb::{EmptyDB, EmptyDBTyped};
 pub use ethersdb::EthersDB;
 pub use in_memory_db::*;
 pub use states::{
-    AccountRevert, AccountStatus, BundleAccount, BundleState, CacheState, DBBox,
+    AccountRevert, AccountStatus, BundleAccount, BundleState, CacheState, DBBox, ExecutionTrace,
     OriginalValuesKnown, PlainAccount, RevertToSlot, State, StateBuilder, StateDBBox,
     StorageWithOriginalValues, TransitionAccount, TransitionState,
 };

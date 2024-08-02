@@ -1,6 +1,6 @@
 use super::{
     bundle_state::BundleRetention, cache::CacheState, plain_account::PlainStorage, BundleState,
-    CacheAccount, StateBuilder, TransitionAccount, TransitionState,
+    CacheAccount, ExecutionTrace, StateBuilder, TransitionAccount, TransitionState,
 };
 use crate::db::EmptyDB;
 use revm_interpreter::primitives::{
@@ -44,6 +44,8 @@ pub struct State<DB> {
     /// Bundle is used to update database and create changesets.
     /// Bundle state can be set on initialization if we want to use preloaded bundle.
     pub bundle_state: BundleState,
+    /// Execution trace is used to track all database accesses such that a witness can be generated.
+    pub execution_trace: Option<ExecutionTrace>,
     /// Addition layer that is going to be used to fetched values before fetching values
     /// from database.
     ///
@@ -210,16 +212,29 @@ impl<DB: Database> State<DB> {
     pub fn take_bundle(&mut self) -> BundleState {
         core::mem::take(&mut self.bundle_state)
     }
+
+    /// Returns the current execution trace and replaces it with an empty one.
+    pub fn take_execution_trace(&mut self) -> Option<ExecutionTrace> {
+        self.execution_trace.as_mut().map(ExecutionTrace::take)
+    }
 }
 
 impl<DB: Database> Database for State<DB> {
     type Error = DB::Error;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        if let Some(execution_trace) = self.execution_trace.as_mut() {
+            execution_trace.add_account(address);
+        }
+
         self.load_cache_account(address).map(|a| a.account_info())
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        if let Some(execution_trace) = self.execution_trace.as_mut() {
+            execution_trace.add_code(code_hash);
+        }
+
         let res = match self.cache.contracts.entry(code_hash) {
             hash_map::Entry::Occupied(entry) => Ok(entry.get().clone()),
             hash_map::Entry::Vacant(entry) => {
@@ -239,6 +254,10 @@ impl<DB: Database> Database for State<DB> {
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(execution_trace) = self.execution_trace.as_mut() {
+            execution_trace.add_storage(address, index);
+        }
+
         // Account is guaranteed to be loaded.
         // Note that storage from bundle is already loaded with account.
         if let Some(account) = self.cache.accounts.get_mut(&address) {
@@ -269,6 +288,10 @@ impl<DB: Database> Database for State<DB> {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        if let Some(execution_trace) = self.execution_trace.as_mut() {
+            execution_trace.add_block_num(number);
+        }
+
         match self.block_hashes.entry(number) {
             btree_map::Entry::Occupied(entry) => Ok(*entry.get()),
             btree_map::Entry::Vacant(entry) => {
@@ -304,7 +327,54 @@ mod tests {
         states::{reverts::AccountInfoRevert, StorageSlot},
         AccountRevert, AccountStatus, BundleAccount, RevertToSlot,
     };
-    use revm_interpreter::primitives::keccak256;
+    use revm_interpreter::primitives::{keccak256, HashSet};
+
+    #[test]
+    fn test_execution_trace() {
+        let mut state = State::builder().with_execution_trace().build();
+
+        // define access targets
+        let block_num_1 = 1;
+        let block_num_2 = 2;
+
+        let account_1 = Address::from_slice(&[0x1; 20]);
+        let account_1_slot_access_1 = U256::from(100);
+        let account_1_slot_access_2 = U256::from(200);
+
+        let account_2 = Address::from_slice(&[0x2; 20]);
+        let account_2_slot_access_1 = U256::from(300);
+
+        let bytecode_hash_1 = B256::from_slice(&[0x1; 32]);
+        let bytecode_hash_2 = B256::from_slice(&[0x2; 32]);
+
+        // access targets
+        state.block_hash(block_num_1).unwrap();
+        state.block_hash(block_num_2).unwrap();
+        state.load_cache_account(account_1).unwrap();
+        state.storage(account_1, account_1_slot_access_1).unwrap();
+        state.storage(account_1, account_1_slot_access_2).unwrap();
+        state.load_cache_account(account_2).unwrap();
+        state.storage(account_2, account_2_slot_access_1).unwrap();
+        state.code_by_hash(bytecode_hash_1).unwrap();
+        state.code_by_hash(bytecode_hash_2).unwrap();
+
+        // construct expected witness tracker
+        let expected = ExecutionTrace {
+            accounts: HashMap::from([
+                (
+                    account_1,
+                    HashSet::from([account_1_slot_access_1, account_1_slot_access_2]),
+                ),
+                (account_2, HashSet::from([account_2_slot_access_1])),
+            ]),
+            codes: HashSet::from([(bytecode_hash_1), (bytecode_hash_2)]),
+            block_hashes: HashSet::from([block_num_1, block_num_2]),
+        };
+
+        // apply assertions
+        let witness_tracker = state.take_execution_trace();
+        assert_eq!(Some(expected), witness_tracker);
+    }
 
     #[test]
     fn block_hash_cache() {
