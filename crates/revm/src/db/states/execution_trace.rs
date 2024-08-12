@@ -2,6 +2,7 @@ use revm_interpreter::primitives::{Address, HashMap, HashSet, B256, U256};
 
 /// A struct that is used to trace the data which has been accessed from the database.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExecutionTrace {
     /// Accessed accounts and associated storage slots.
     pub accounts: HashMap<Address, HashSet<U256>>,
